@@ -207,7 +207,15 @@ export default function App() {
     setLoginLoading(true);
     setLoginError(null);
 
-    const email = loginEmail.trim().toLowerCase();
+    let email = loginEmail.trim().toLowerCase();
+    // Auto-correct common mistakes like .con or gamil to ensure mobile users can log in effortlessly
+    if (email.endsWith("@gmail.con")) {
+      email = email.replace("@gmail.con", "@gmail.com");
+    } else if (email.endsWith("@gamil.com")) {
+      email = email.replace("@gamil.com", "@gmail.com");
+    } else if (email.endsWith("@gamil.con")) {
+      email = email.replace("@gamil.con", "@gmail.com");
+    }
     const password = loginPassword.trim();
     const BOOTSTRAP_EMAILS = [
       "mominkhan051220@gmail.com",
