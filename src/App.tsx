@@ -229,14 +229,20 @@ export default function App() {
         
         if (isBootstrapAdmin && password.length > 0) {
           console.log("[Bootstrap] Using emergency login for admin:", email);
-          // Check if user exists by email
-          const q = query(collection(db, "users"), where("email", "==", email), limit(1));
-          const snap = await getDocs(q);
+          
+          let allUsers: User[] = [];
+          try {
+            allUsers = await api.getUsers();
+          } catch (e) {
+            console.warn("Bootstrap getUsers failed, trying empty list", e);
+          }
+          
+          const matchedUser = allUsers.find(u => (u.email || "").toLowerCase().trim() === email);
           
           let adminUser: User;
           const fullPermissions = ["dashboard", "pos", "sales", "add_sale", "delete_sale", "products", "add_product", "delete_product", "customers", "add_customer", "delete_customer", "suppliers", "accounting", "due", "sms", "reports", "users", "settings"];
           
-          if (snap.empty) {
+          if (!matchedUser) {
             // Create the admin doc if missing
             adminUser = {
               id: "admin-master-" + Date.now(),
@@ -248,18 +254,17 @@ export default function App() {
               businessId: "main-business",
               permissions: fullPermissions
             };
-            await setDoc(doc(db, "users", adminUser.id), adminUser);
+            await api.createUser(adminUser);
           } else {
             // User exists but wrong password in DB or something else? Sync it.
-            const existingDoc = snap.docs[0];
-            adminUser = { id: existingDoc.id, ...existingDoc.data() } as User;
+            adminUser = { ...matchedUser };
             
             // Only update if password or role needs fixing
             if (adminUser.password !== password || adminUser.role !== 'admin') {
               adminUser.password = password;
               adminUser.role = "admin";
               adminUser.permissions = fullPermissions;
-              await setDoc(doc(db, "users", adminUser.id), adminUser);
+              await api.updateUser(adminUser.id, adminUser);
             }
           }
           

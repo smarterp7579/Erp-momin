@@ -74,7 +74,32 @@ const cleanData = (obj: any): any => {
   return result;
 };
 
-let useRestFallback = false;
+import firebaseConfig from "../../firebase-applet-config.json";
+
+const isPlaceholderConfig = 
+  !firebaseConfig || 
+  !firebaseConfig.projectId || 
+  firebaseConfig.projectId.includes("remixed-project-id") || 
+  firebaseConfig.apiKey.includes("remixed-api-key");
+
+let useRestFallback = isPlaceholderConfig;
+
+const promiseWithTimeout = <T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(errorMsg));
+    }, ms);
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+};
 
 // Helper to handle offline/connection/permission fallback
 const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction: () => Promise<T>): Promise<T> => {
@@ -88,10 +113,12 @@ const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction:
   }
 
   try {
-    return await firestoreAction();
+    // 3-second timeout for Firestore operations to avoid indefinite hanging
+    return await promiseWithTimeout(firestoreAction(), 3000, "firestore_timeout: Firestore connection timed out after 3s");
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (
+      errMsg.includes("firestore_timeout") ||
       errMsg.includes("offline") || 
       errMsg.includes("unavailable") || 
       errMsg.includes("failed-precondition") || 
@@ -99,13 +126,13 @@ const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction:
       errMsg.includes("Permissions") ||
       errMsg.includes("Missing or insufficient permissions")
     ) {
-      console.warn("[Firestore Bypass] Firestore error encountered. Switching to fallback REST API:", errMsg);
+      console.warn("[Firestore Bypass] Firestore error/timeout encountered. Switching to fallback REST API:", errMsg);
       useRestFallback = true;
       try {
         return await restAction();
       } catch (restErr) {
         console.error("REST fallback failed:", restErr);
-        throw err; // throw original firestore error to keep trace if both fail
+        throw err; // throw original firestore error/timeout to keep trace if both fail
       }
     }
     throw err;
