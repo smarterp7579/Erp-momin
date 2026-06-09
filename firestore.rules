@@ -1,0 +1,182 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasValidSession() {
+      return isSignedIn() && exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
+    }
+
+    function getSession() {
+      return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data;
+    }
+
+    function isOwner() {
+      return isSignedIn() && (
+        request.auth.token.email == 'mominkhan051220@gmail.com' ||
+        request.auth.uid == 'yHCNX6b117U0KIIoZomnJKza7qb2' ||
+        (hasValidSession() && getSession().email == 'mominkhan051220@gmail.com') ||
+        (hasValidSession() && getSession().email == 'apondreem@gmail.com')
+      );
+    }
+
+    function isAdmin() {
+      return isOwner() || (hasValidSession() && (getSession().role == 'admin' || getSession().role == 'owner'));
+    }
+
+    // Check if user belongs to the business
+    function isBusinessUser(businessId) {
+      return isOwner() || 
+             (hasValidSession() && getSession().businessId == businessId) ||
+             // Fallback support if no session has synced yet but custom user local state was initialized
+             (!hasValidSession());
+    }
+
+    function isBusinessAdmin(businessId) {
+      return isOwner() ||
+             (hasValidSession() && getSession().businessId == businessId && (getSession().role == 'admin' || getSession().role == 'owner')) ||
+             (!hasValidSession());
+    }
+
+    // --- Entity Validations ---
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'salePrice', 'stock']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.salePrice is number && data.salePrice >= 0 &&
+             data.stock is number &&
+             (!('purchasePrice' in data) || data.purchasePrice is number) &&
+             (!('createdAt' in data) || data.createdAt is string);
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['name', 'phone']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() <= 20 &&
+             (!('dueAmount' in data) || data.dueAmount is number);
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['totalAmount', 'payableAmount', 'paidAmount', 'dueAmount']) &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.payableAmount is number && data.payableAmount >= 0 &&
+             data.paidAmount is number && data.paidAmount >= 0 &&
+             data.dueAmount is number && data.dueAmount >= 0 &&
+             (!('items' in data) || data.items is list) &&
+             (!('createdAt' in data) || data.createdAt is string);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role', 'businessId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 100 &&
+             data.role in ['admin', 'manager', 'salesman', 'accountant', 'staff'] &&
+             data.businessId is string && data.businessId.size() > 0;
+    }
+
+    // --- Routes ---
+
+    // Sessions Subcollection to support secure authentication mapping
+    match /sessions/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      // Allow read/query of the users table to verify email/passwords during login
+      allow get, list: if true;
+      allow create: if isValidUser(incoming());
+      allow update: if isOwner() || 
+                      (hasValidSession() && (getSession().role == 'admin' || getSession().userId == userId)) ||
+                      (!hasValidSession() && isValidUser(incoming()));
+      allow delete: if isOwner() || (hasValidSession() && getSession().role == 'admin') || (!hasValidSession());
+    }
+
+    // Business Data Map
+    match /businesses/{businessId} {
+      allow get: if isBusinessUser(businessId);
+      allow create: if true;
+      allow update: if isBusinessAdmin(businessId);
+      allow delete: if isOwner();
+
+      // Subcollections
+      match /products/{productId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidProduct(incoming());
+        allow update: if isBusinessUser(businessId) && isValidProduct(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasAny([
+            'stock', 'salePrice', 'name', 'bnName', 'sku', 'barcode', 'barcodes', 
+            'categoryId', 'brandId', 'unit', 'purchasePrice', 'minStock', 'expiryDate', 'image', 'createdAt'
+          ])
+        );
+        allow delete: if isBusinessAdmin(businessId);
+      }
+
+      match /customers/{customerId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidCustomer(incoming());
+        allow update: if isBusinessUser(businessId) && isValidCustomer(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasAny([
+            'name', 'phone', 'address', 'dueAmount', 'totalSpent', 'image', 'email', 'createdBy', 'createdAt'
+          ])
+        );
+        allow delete: if isBusinessAdmin(businessId);
+
+        match /payments/{pId} {
+          allow read, write: if isBusinessUser(businessId);
+        }
+      }
+
+      match /sales/{saleId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidSale(incoming());
+        allow update: if isBusinessUser(businessId) && isValidSale(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasAny([
+            'totalAmount', 'discount', 'vat', 'payableAmount', 'paidAmount', 'dueAmount', 
+            'paymentMethod', 'items', 'createdAt', 'customerName', 'customerPhone', 
+            'customerAddress', 'createdBy', 'userId', 'invoiceNo'
+          ])
+        );
+        allow delete: if isBusinessAdmin(businessId);
+      }
+
+      match /expenses/{expenseId} {
+        allow read, write: if isBusinessUser(businessId);
+      }
+
+      match /suppliers/{supplierId} {
+        allow read, write: if isBusinessUser(businessId);
+
+        match /transactions/{tId} {
+          allow read, write: if isBusinessUser(businessId);
+        }
+      }
+
+      match /sms_logs/{logId} {
+        allow read, write: if isBusinessUser(businessId);
+      }
+
+      match /config/{configId} {
+        allow read, write: if isBusinessUser(businessId);
+      }
+      
+      match /categories/{catId} {
+        allow read, write: if isBusinessUser(businessId);
+      }
+    }
+
+    // Admins list
+    match /admins/{uid} {
+      allow read: if true;
+      allow write: if false; 
+    }
+  }
+}

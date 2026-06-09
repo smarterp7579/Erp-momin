@@ -1,0 +1,26 @@
+{
+  "products": [],
+  "customers": [],
+  "sales": [],
+  "expenses": [],
+  "suppliers": [],
+  "transactions": [],
+  "categories": [],
+  "users": [
+    {
+      "id": "1",
+      "name": "মোঃ মমিন আলী",
+      "email": "mominkhan051220@gmail.com",
+      "phone": "01741456838",
+      "password": "momin123",
+      "role": "admin",
+      "lastSeen": "2026-06-09T08:02:02.000Z"
+    }
+  ],
+  "smsLogs": [],
+  "business": {
+    "name": "Smart Business",
+    "currency": "BDT",
+    "theme": "light"
+  }
+}

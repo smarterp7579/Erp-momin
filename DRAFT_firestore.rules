@@ -1,0 +1,176 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'password');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Auth tokens never contain roles. Check 'admins' collection.
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Check if user belongs to the business
+    function isBusinessUser(businessId) {
+      return isSignedIn() && (
+        isAdmin() ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.businessId == businessId
+      );
+    }
+
+    // --- Entity Validations ---
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'sellingPrice', 'stock']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.sellingPrice is number && data.sellingPrice >= 0 &&
+             data.stock is number &&
+             (!('purchasePrice' in data) || data.purchasePrice is number) &&
+             (!('createdAt' in data) || data.createdAt is string);
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['name', 'phone']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             (!('dueAmount' in data) || data.dueAmount is number);
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['totalAmount', 'paidAmount']) &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.paidAmount is number && data.paidAmount >= 0 &&
+             (!('items' in data) || data.items is list) &&
+             (!('createdAt' in data) || data.createdAt is string);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role', 'businessId']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.role in ['admin', 'staff'] &&
+             data.businessId is string;
+    }
+
+    // --- Routes ---
+
+    // Public/Shared read-only config if needed (none identified yet)
+
+    // User profiles
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && (existing().businessId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.businessId || isAdmin());
+      
+      allow create: if isSignedIn() && isValidUser(incoming()) && (
+        // Initial bootstrap or Admin can create
+        isAdmin() || !exists(/databases/$(database)/documents/users/$(userId))
+      );
+      
+      allow update: if isSignedIn() && isValidUser(incoming()) && (
+        isAdmin() || (
+          request.auth.uid == userId && 
+          incoming().role == existing().role && 
+          incoming().businessId == existing().businessId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'password', 'email'])
+        )
+      );
+    }
+
+    // Business Data
+    match /businesses/{businessId} {
+      allow get: if isBusinessUser(businessId);
+      allow create, update: if isSignedIn() && isAdmin(); // Only super admins can manage businesses themselves
+
+      // Subcollections
+      match /products/{productId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidProduct(incoming()) && isValidId(productId);
+        allow update: if isBusinessUser(businessId) && isValidProduct(incoming()) && (
+          // Action: Update stock/price
+          incoming().diff(existing()).affectedKeys().hasAny(['stock', 'sellingPrice', 'name', 'category', 'purchasePrice'])
+        );
+        allow delete: if isBusinessUser(businessId) && isAdmin();
+      }
+
+      match /customers/{customerId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidCustomer(incoming()) && isValidId(customerId);
+        allow update: if isBusinessUser(businessId) && isValidCustomer(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasAny(['name', 'phone', 'address', 'dueAmount'])
+        );
+        allow delete: if isBusinessUser(businessId) && isAdmin();
+      }
+
+      match /sales/{saleId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidSale(incoming()) && isValidId(saleId);
+        // Sales are usually immutable but status/payments might update
+        allow update: if isBusinessUser(businessId) && isValidSale(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasAny(['paidAmount', 'dueAmount'])
+        );
+        allow delete: if isBusinessUser(businessId) && isAdmin();
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId) && isValidId(expenseId);
+        allow update: if isBusinessUser(businessId) && isValidId(expenseId);
+        allow delete: if isBusinessUser(businessId) && isAdmin();
+      }
+
+      match /suppliers/{supplierId} {
+        allow read: if isBusinessUser(businessId);
+        allow create, update: if isBusinessUser(businessId) && isValidId(supplierId);
+        allow delete: if isBusinessUser(businessId) && isAdmin();
+
+        match /transactions/{tId} {
+          allow read, write: if isBusinessUser(businessId);
+        }
+      }
+
+      match /sms_logs/{logId} {
+        allow read: if isBusinessUser(businessId);
+        allow create: if isBusinessUser(businessId);
+      }
+
+      match /config/{configId} {
+        allow read, write: if isBusinessUser(businessId) && (
+          // In this app, staff might need to view config but maybe only admin should change
+          (request.method == 'get') || isAdmin() || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+      }
+      
+      match /categories/{catId} {
+        allow read, write: if isBusinessUser(businessId);
+      }
+    }
+
+    // Admins list
+    match /admins/{uid} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only manageable via Firebase Console or special script
+    }
+  }
+}
