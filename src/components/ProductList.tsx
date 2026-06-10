@@ -242,6 +242,20 @@ export function ProductList({ user }: ProductListProps) {
             box-shadow: none !important;
           }
         }
+        .barcode-container {
+          display: flex !important;
+          justify-content: center !important;
+          align-items: center !important;
+          width: 100% !important;
+          margin: 4px 0 !important;
+          text-align: center !important;
+        }
+        .barcode-container svg {
+          display: block !important;
+          margin: 0 auto !important;
+          max-width: 100% !important;
+          height: auto !important;
+        }
         .print-card-header {
           font-size: 10px !important;
           font-weight: bold !important;
@@ -1063,7 +1077,21 @@ export function ProductList({ user }: ProductListProps) {
                   flex-direction: column !important;
                   align-items: center !important;
                   justify-content: space-between !important;
-                  height: 110px !important;
+                  height: ${barcodeLayout === "a4_4col" ? "90px" : "110px"} !important;
+                }
+                .barcode-container {
+                  display: flex !important;
+                  justify-content: center !important;
+                  align-items: center !important;
+                  width: 100% !important;
+                  margin: 4px 0 !important;
+                  text-align: center !important;
+                }
+                .barcode-container svg {
+                  display: block !important;
+                  margin: 0 auto !important;
+                  max-width: 100% !important;
+                  height: auto !important;
                 }
                 .print-card-header {
                   font-size: 10px !important;
@@ -1252,10 +1280,10 @@ export function ProductList({ user }: ProductListProps) {
                         )}
                         
                         {/* Barcode vector generator */}
-                        <div className="my-1 scale-90 origin-center">
+                        <div className="barcode-container my-1 w-full flex items-center justify-center overflow-hidden">
                           <BarcodeGenerator 
                             value={selectedBarcodeForPrint} 
-                            width={barcodeLayout === "a4_4col" ? 1.4 : 1.6} 
+                            width={barcodeLayout === "a4_4col" ? 1.25 : 1.5} 
                             height={barcodeLayout === "a4_4col" ? 28 : 34} 
                             fontSize={9} 
                           />
