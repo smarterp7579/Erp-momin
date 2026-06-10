@@ -194,7 +194,106 @@ export function ProductList({ user }: ProductListProps) {
   };
 
   const handlePrint = () => {
-    window.print();
+    const sheetElement = document.getElementById("print-barcode-sheet");
+    if (!sheetElement) return;
+
+    // Pack the styles we need for the barcode stickers so they render beautifully
+    const styles = `
+      <style>
+        @media print {
+          body {
+            background: white !important;
+            color: black !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          #printable-area {
+            display: block !important;
+            visibility: visible !important;
+            padding: 10px !important;
+          }
+        }
+        .print-grid {
+          display: grid !important;
+          gap: 12px !important;
+          grid-template-columns: ${barcodeLayout === "a4_3col" ? "repeat(3, 1fr)" : barcodeLayout === "a4_4col" ? "repeat(4, 1fr)" : "1fr"} !important;
+          width: 100% !important;
+        }
+        .print-card {
+          border: 1px solid #e2e8f0 !important;
+          border-radius: 8px !important;
+          padding: 12px !important;
+          text-align: center !important;
+          background: white !important;
+          color: black !important;
+          page-break-inside: avoid !important;
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          min-height: ${barcodeLayout === "a4_4col" ? "90px" : "110px"} !important;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+        }
+        @media print {
+          .print-card {
+            border: 1px solid #000000 !important;
+            box-shadow: none !important;
+          }
+        }
+        .print-card-header {
+          font-size: 10px !important;
+          font-weight: bold !important;
+          text-transform: uppercase !important;
+          border-bottom: 1px dashed #cbd5e1 !important;
+          width: 100% !important;
+          padding-bottom: 4px !important;
+          margin-bottom: 4px !important;
+          color: #475569 !important;
+        }
+        @media print {
+          .print-card-header {
+            border-bottom: 1px dashed #000000 !important;
+            color: #000000 !important;
+          }
+        }
+        .print-card-name {
+          font-size: 11px !important;
+          font-weight: bold !important;
+          color: #1e293b !important;
+          line-height: 1.2 !important;
+        }
+        @media print {
+          .print-card-name {
+            color: #000000 !important;
+          }
+        }
+        .print-card-price {
+          font-size: 12px !important;
+          font-weight: bold !important;
+          border-top: 1px dashed #cbd5e1 !important;
+          width: 100% !important;
+          padding-top: 6px !important;
+          margin-top: 4px !important;
+          color: #0f172a !important;
+        }
+        @media print {
+          .print-card-price {
+            border-top: 1px dashed #000000 !important;
+            color: #000000 !important;
+          }
+        }
+      </style>
+    `;
+
+    const event = new CustomEvent('smart-print', { 
+      detail: { 
+        html: styles + `<div class="p-4 bg-white">${sheetElement.innerHTML}</div>`
+      } 
+    });
+    window.dispatchEvent(event);
+    setShowBarcodePrintModal(false);
   };
 
   const resetForm = () => {

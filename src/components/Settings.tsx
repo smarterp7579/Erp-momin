@@ -352,8 +352,40 @@ export function Settings({ onBusinessUpdate }: { onBusinessUpdate?: (b: Business
                           const file = e.target.files?.[0];
                           if (file) {
                             const reader = new FileReader();
-                            reader.onloadend = () => {
-                              setBusiness({...business, logo: reader.result as string});
+                            reader.onload = (event) => {
+                              const img = new Image();
+                              img.onload = () => {
+                                const canvas = document.createElement("canvas");
+                                const MAX_WIDTH = 240;
+                                const MAX_HEIGHT = 240;
+                                let width = img.width;
+                                let height = img.height;
+
+                                if (width > height) {
+                                  if (width > MAX_WIDTH) {
+                                    height = Math.round((height * MAX_WIDTH) / width);
+                                    width = MAX_WIDTH;
+                                  }
+                                } else {
+                                  if (height > MAX_HEIGHT) {
+                                    width = Math.round((width * MAX_HEIGHT) / height);
+                                    height = MAX_HEIGHT;
+                                  }
+                                }
+
+                                canvas.width = width;
+                                canvas.height = height;
+                                const ctx = canvas.getContext("2d");
+                                if (ctx) {
+                                  ctx.drawImage(img, 0, 0, width, height);
+                                  // Compress as JPEG (usually under 15KB!) to ensure reliable Firestore saving
+                                  const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+                                  setBusiness({...business, logo: compressedBase64});
+                                } else {
+                                  setBusiness({...business, logo: event.target?.result as string});
+                                }
+                              };
+                              img.src = event.target?.result as string;
                             };
                             reader.readAsDataURL(file);
                           }
