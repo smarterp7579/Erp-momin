@@ -105,6 +105,13 @@ export default function App() {
   const pdfContainerRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
+  const changeTab = (tabId: string) => {
+    setActiveTab(tabId);
+    if (!window.history.state || window.history.state.tab !== tabId) {
+      window.history.pushState({ tab: tabId }, "", `#${tabId}`);
+    }
+  };
+
   useEffect(() => {
     // Initial Auth Check from Session with anonymous integration
     const checkAuth = async () => {
@@ -166,20 +173,19 @@ export default function App() {
           }
         }
       }
-      setIsInitializing(false);
-    };
 
-    checkAuth();
-
-    const loadBusiness = async () => {
+      // Robustly fetch business details sequentially after authenticating setup is completed
       try {
         const data = await api.getBusiness();
         setBusiness(data);
       } catch (err) {
-        console.error("Failed to load business info:", err);
+        console.error("Failed to load business info in checkAuth:", err);
       }
+
+      setIsInitializing(false);
     };
-    loadBusiness();
+
+    checkAuth();
 
     const handlePrint = (e: any) => {
       setPrintHtml(e.detail.html);
@@ -191,6 +197,40 @@ export default function App() {
       window.removeEventListener('smart-print', handlePrint);
     };
   }, []);
+
+  // Support back button navigation and logout confirmation on dashboard back click
+  useEffect(() => {
+    if (!user) return;
+
+    // Push initial history state for the active tab if none exists
+    if (!window.history.state) {
+      window.history.replaceState({ tab: activeTab }, "", `#${activeTab}`);
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      const state = e.state;
+      const tab = state?.tab;
+
+      if (activeTab === "dashboard") {
+        // Intercept back button from dashboard to confirm logout
+        // Re-push dashboard state so the back transition is arrested in browser history
+        window.history.pushState({ tab: "dashboard" }, "", "#dashboard");
+        
+        const confirmLogout = window.confirm("আপনি কি নিশ্চিতভাবে লগআউট করতে চান?");
+        if (confirmLogout) {
+          handleLogout();
+        }
+      } else {
+        // If they click back button on any other tab, return them gracefully to the dashboard
+        setActiveTab("dashboard");
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [user, activeTab]);
 
   // Auto Backup Effect - Only runs once user is confirmed authenticated in Firebase
   useEffect(() => {
@@ -684,13 +724,13 @@ export default function App() {
             className={cn("no-print-global flex bg-slate-50 dark:bg-slate-950 h-screen overflow-hidden transition-colors duration-300", theme === "dark" && "dark")}
           >
             <div className="hidden md:flex flex-shrink-0">
-              <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} user={user} business={business} />
+              <Sidebar activeTab={activeTab} setActiveTab={changeTab} user={user} business={business} />
             </div>
             
             <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
               <Header 
                 onLogout={handleLogout} 
-                onNewSale={() => setActiveTab("pos")} 
+                onNewSale={() => changeTab("pos")} 
                 user={user} 
                 theme={theme}
                 toggleTheme={toggleTheme}
@@ -721,7 +761,7 @@ export default function App() {
                       <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 font-bengali">এক্সেস সীমিত (Access Denied)</h2>
                       <p className="text-slate-500 dark:text-slate-400 font-bengali max-w-sm">আপনার এই মডিউলে প্রবেশের অনুমতি নেই। বিস্তারিত জানতে এডমিনের সাথে যোগাযোগ করুন।</p>
                       <button 
-                        onClick={() => setActiveTab("dashboard")}
+                        onClick={() => changeTab("dashboard")}
                         className="px-6 py-2 bg-primary text-white rounded-xl font-bold font-bengali"
                       >
                         ড্যাশবোর্ডে ফিরে যান
@@ -731,7 +771,7 @@ export default function App() {
                 </Suspense>
               </main>
 
-              <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} user={user} />
+              <MobileNav activeTab={activeTab} setActiveTab={changeTab} user={user} />
             </div>
           </motion.div>
         )}

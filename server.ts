@@ -408,9 +408,88 @@ async function startServer() {
       return initialData;
     }
   };
+  const syncStateToFirestore = async (dbData: any) => {
+    if (!isFirestoreAccessible) return;
+    try {
+      const firestore = getFirestoreInstance();
+      if (!firestore) return;
+
+      const businessId = "main-business";
+      const parentDoc = firestore.collection("businesses").doc(businessId);
+      await parentDoc.set({ id: businessId }, { merge: true });
+
+      const cleanForFirestore = (obj: any): any => {
+        if (obj === undefined || obj === null) return null;
+        if (Array.isArray(obj)) {
+          return obj.map(item => cleanForFirestore(item));
+        }
+        if (typeof obj === "object") {
+          const res: any = {};
+          for (const key of Object.keys(obj)) {
+            if (obj[key] !== undefined) {
+              res[key] = cleanForFirestore(obj[key]);
+            }
+          }
+          return res;
+        }
+        return obj;
+      };
+
+      // 1. Sync Business settings if available
+      if (dbData.business && dbData.business.name) {
+        await firestore.collection("businesses").doc(businessId).set(cleanForFirestore({
+          ...dbData.business,
+          id: businessId
+        }), { merge: true });
+      }
+
+      // 2. Sync Users table (global collection)
+      if (Array.isArray(dbData.users) && dbData.users.length > 0) {
+        for (const u of dbData.users) {
+          if (u.id) {
+            await firestore.collection("users").doc(u.id).set(cleanForFirestore(u), { merge: true });
+          }
+        }
+      }
+
+      // Synchronize primary subcollections
+      const syncSubcol = async (colName: string, items: any[]) => {
+        if (!Array.isArray(items) || items.length === 0) return;
+        const subcolRef = parentDoc.collection(colName);
+        for (const item of items) {
+          if (item.id) {
+            const docId = String(item.id);
+            const dataToSet = { ...item };
+            delete dataToSet.id;
+            await subcolRef.doc(docId).set(cleanForFirestore(dataToSet), { merge: true });
+          }
+        }
+      };
+
+      if (dbData.categories) await syncSubcol("categories", dbData.categories);
+      if (dbData.products) await syncSubcol("products", dbData.products);
+      if (dbData.customers) await syncSubcol("customers", dbData.customers);
+      if (dbData.suppliers) await syncSubcol("suppliers", dbData.suppliers);
+      if (dbData.sales) await syncSubcol("sales", dbData.sales);
+      if (dbData.expenses) await syncSubcol("expenses", dbData.expenses);
+      if (dbData.smsLogs) await syncSubcol("sms_logs", dbData.smsLogs);
+
+      console.log(`[Firestore Sync] Background database alignment to Cloud Firestore complete.`);
+    } catch (err: any) {
+      console.error("[Firestore Sync] Background alignment to Cloud Firestore failed:", err.message);
+    }
+  };
+
   const saveDB = (data: any) => {
     try {
       fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+      
+      // Async background synchronization to Firestore
+      if (isFirestoreAccessible) {
+        syncStateToFirestore(data).catch((err) => {
+          console.error("[Background Sync] Firestore background sync error:", err.message);
+        });
+      }
     } catch (e) {
       console.error("Database Write Error:", e);
     }
@@ -1272,72 +1351,98 @@ async function startServer() {
       }
     };
 
-    // Migration function to move any local server data (db.json) directly into Cloud Firestore
-    const migrateLocalToFirestore = async () => {
+    // Robust double-directional synchronization function at server startup
+    const synchronizeFirestoreAndLocalonStartup = async () => {
       if (!isFirestoreAccessible) return;
       try {
         const firestore = getFirestoreInstance();
         if (!firestore) return;
 
-        console.log("[Migration Engine] Checking if local db.json needs migration to Firestore...");
-        const dbData = getDB();
-        const businessId = "main-business"; // default business scope
+        console.log("[Setup Engine] Performing server boot synchronization with Cloud Firestore...");
+        const businessId = "main-business";
+        const cloudData = await fetchFirestoreBackupData(businessId);
 
-        // 1. Sync Business settings if available
-        if (dbData.business && dbData.business.name) {
-          console.log("[Migration Engine] Migrating business settings...");
-          await firestore.collection("businesses").doc(businessId).set({
-            ...dbData.business,
-            id: businessId
-          }, { merge: true });
-        }
+        const hasCloudProducts = cloudData && Array.isArray(cloudData.products) && cloudData.products.length > 0;
+        const hasCloudSales = cloudData && Array.isArray(cloudData.sales) && cloudData.sales.length > 0;
+        const hasCloudCustomers = cloudData && Array.isArray(cloudData.customers) && cloudData.customers.length > 0;
 
-        // 2. Sync Users table
-        if (Array.isArray(dbData.users) && dbData.users.length > 0) {
-          console.log("[Migration Engine] Migrating users...");
-          for (const u of dbData.users) {
-            if (u.id) {
-              await firestore.collection("users").doc(u.id).set(u, { merge: true });
+        if (hasCloudProducts || hasCloudSales || hasCloudCustomers) {
+          console.log("[Setup Engine] Active backup records detected in Cloud Firestore. Overwriting local state with Cloud Firestore...");
+          const currentDB = getDB();
+          const restoredDb = {
+            users: (cloudData.users && cloudData.users.length > 0) ? cloudData.users : currentDB.users,
+            products: cloudData.products || [],
+            categories: cloudData.categories || [],
+            customers: cloudData.customers || [],
+            suppliers: cloudData.suppliers || [],
+            sales: cloudData.sales || [],
+            expenses: cloudData.expenses || [],
+            transactions: cloudData.transactions || [],
+            smsLogs: cloudData.smsLogs || cloudData.sms_logs || [],
+            smsConfig: cloudData.smsConfig || currentDB.smsConfig,
+            business: cloudData.business || currentDB.business
+          };
+          saveDB(restoredDb);
+          console.log(`[Setup Engine] Local server-side database has been successfully restored/aligned from Firestore! (Products: ${restoredDb.products.length}, Sales: ${restoredDb.sales.length})`);
+        } else {
+          console.log("[Setup Engine] Cloud Firestore is empty or contains no major records. Transferring local server state to Firestore...");
+          const dbData = getDB();
+
+          // 1. Sync Business settings if available
+          if (dbData.business && dbData.business.name) {
+            console.log("[Setup Engine] Syncing business settings to Firestore...");
+            await firestore.collection("businesses").doc(businessId).set({
+              ...dbData.business,
+              id: businessId
+            }, { merge: true });
+          }
+
+          // 2. Sync Users table
+          if (Array.isArray(dbData.users) && dbData.users.length > 0) {
+            console.log("[Setup Engine] Syncing users to Firestore...");
+            for (const u of dbData.users) {
+              if (u.id) {
+                await firestore.collection("users").doc(u.id).set(u, { merge: true });
+              }
             }
           }
-        }
 
-        // Subcollection Sync Helper
-        const syncSubcollection = async (colName: string, items: any[]) => {
-          if (!Array.isArray(items) || items.length === 0) return;
-          console.log(`[Migration Engine] Migrating ${items.length} items to subcollection: ${colName}...`);
-          
-          const parentDoc = firestore.collection("businesses").doc(businessId);
-          // Make sure parent document exists in the schema
-          await parentDoc.set({ id: businessId }, { merge: true });
+          // Subcollection Sync Helper
+          const syncSubcollection = async (colName: string, items: any[]) => {
+            if (!Array.isArray(items) || items.length === 0) return;
+            console.log(`[Setup Engine] Migrating ${items.length} items to subcollection: ${colName}...`);
+            
+            const parentDoc = firestore.collection("businesses").doc(businessId);
+            await parentDoc.set({ id: businessId }, { merge: true });
 
-          for (const item of items) {
-            if (item.id) {
-              const cleaned = { ...item };
-              delete cleaned.id; // Firestore ID is document path ID
-              const docRef = parentDoc.collection(colName).doc(item.id);
-              await docRef.set(cleaned, { merge: true });
+            for (const item of items) {
+              if (item.id) {
+                const cleaned = { ...item };
+                delete cleaned.id;
+                const docRef = parentDoc.collection(colName).doc(item.id);
+                await docRef.set(cleaned, { merge: true });
+              }
             }
-          }
-        };
+          };
 
-        // Sync each primary collection
-        if (dbData.categories) await syncSubcollection("categories", dbData.categories);
-        if (dbData.products) await syncSubcollection("products", dbData.products);
-        if (dbData.customers) await syncSubcollection("customers", dbData.customers);
-        if (dbData.suppliers) await syncSubcollection("suppliers", dbData.suppliers);
-        if (dbData.sales) await syncSubcollection("sales", dbData.sales);
-        if (dbData.expenses) await syncSubcollection("expenses", dbData.expenses);
-        if (dbData.smsLogs) await syncSubcollection("sms_logs", dbData.smsLogs);
+          // Sync each primary collection
+          if (dbData.categories) await syncSubcollection("categories", dbData.categories);
+          if (dbData.products) await syncSubcollection("products", dbData.products);
+          if (dbData.customers) await syncSubcollection("customers", dbData.customers);
+          if (dbData.suppliers) await syncSubcollection("suppliers", dbData.suppliers);
+          if (dbData.sales) await syncSubcollection("sales", dbData.sales);
+          if (dbData.expenses) await syncSubcollection("expenses", dbData.expenses);
+          if (dbData.smsLogs) await syncSubcollection("sms_logs", dbData.smsLogs);
 
-        console.log("[Migration Engine] Local db.json content successfully migrated/merged to Cloud Firestore.");
+          console.log("[Setup Engine] Local db.json content successfully migrated to Cloud Firestore.");
+        }
       } catch (err: any) {
-        console.error("[Migration Engine] Background migration to Firestore failed:", err.message);
+        console.error("[Setup Engine] Startup synchronization with Firestore failed:", err.message);
       }
     };
 
     runMissedBackupCheck();
-    migrateLocalToFirestore();
+    synchronizeFirestoreAndLocalonStartup();
   });
 }
 
