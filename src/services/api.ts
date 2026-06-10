@@ -603,80 +603,55 @@ const fetch = apiFetch;
 
 // Helper to handle offline/connection/permission fallback
 const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction: () => Promise<T>): Promise<T> => {
+  // If we already know we are running in local/fallback database mode, run restAction immediately
   if (useLocalStorageFallback) {
     try {
       return await restAction();
     } catch (restErr: any) {
-      console.error("Local storage API fallback failed:", restErr);
+      console.warn("[Fallback] Direct local database fallback action failed:", restErr?.message || restErr);
     }
   }
 
-  if (useRestFallback) {
+  // 1. Try Firestore (if Firestore fallback is not yet active)
+  if (!useRestFallback) {
     try {
-      return await restAction();
-    } catch (restErr: any) {
-      console.error("REST fallback failed, switching to local database:", restErr);
-      useLocalStorageFallback = true;
-      try {
-        const funcStr = restAction.toString();
-        const urlMatch = funcStr.match(/['"`](\/api\/[^'"`]+)['"`]/);
-        const dummyUrl = urlMatch ? urlMatch[1] : "/api/dummy";
-        let method = "GET";
-        if (funcStr.includes("POST")) method = "POST";
-        else if (funcStr.includes("PUT")) method = "PUT";
-        else if (funcStr.includes("DELETE")) method = "DELETE";
-
-        const mockRes = await handleMockApi(dummyUrl, { method });
-        if (mockRes) {
-          return await mockRes.json();
-        }
-      } catch (innerErr) {
-        console.error("Emergency localStorage fallback failed:", innerErr);
-      }
-      throw restErr;
-    }
-  }
-
-  try {
-    return await promiseWithTimeout(firestoreAction(), 3000, "firestore_timeout: Firestore connection timed out after 3s");
-  } catch (err: any) {
-    const errMsg = err?.message || String(err);
-    if (
-      errMsg.includes("firestore_timeout") ||
-      errMsg.includes("offline") || 
-      errMsg.includes("unavailable") || 
-      errMsg.includes("failed-precondition") || 
-      errMsg.includes("permission-denied") ||
-      errMsg.includes("Permissions") ||
-      errMsg.includes("Missing or insufficient permissions")
-    ) {
+      return await promiseWithTimeout(firestoreAction(), 3000, "firestore_timeout: Firestore connection timed out after 3s");
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
       console.warn("[Firestore Bypass] Firestore error/timeout encountered. Switching to fallback REST API:", errMsg);
       useRestFallback = true;
-      try {
-        return await restAction();
-      } catch (restErr: any) {
-        console.error("REST fallback failed on firestore fallback, switching to local DB:", restErr);
-        useLocalStorageFallback = true;
-        try {
-          const funcStr = restAction.toString();
-          const urlMatch = funcStr.match(/['"`](\/api\/[^'"`]+)['"`]/);
-          const dummyUrl = urlMatch ? urlMatch[1] : "/api/dummy";
-          let method = "GET";
-          if (funcStr.includes("POST")) method = "POST";
-          else if (funcStr.includes("PUT")) method = "PUT";
-          else if (funcStr.includes("DELETE")) method = "DELETE";
-
-          const mockRes = await handleMockApi(dummyUrl, { method });
-          if (mockRes) {
-            return await mockRes.json();
-          }
-        } catch (innerErr) {
-          console.error("Emergency localStorage fallback failed on firestore catch:", innerErr);
-        }
-        throw err;
-      }
     }
-    throw err;
+  }
+
+  // 2. Try REST API
+  try {
+    return await restAction();
+  } catch (restErr: any) {
+    const errMsg = restErr?.message || String(restErr);
+    
+    // CRITICAL: Propagate validation and user credentials check errors directly so the front-end login screens can display precise instructions.
+    if (
+      errMsg.includes("পাসওয়ার্ড") || 
+      errMsg.includes("ইমেইল") || 
+      errMsg.includes("অ্যাকাউন্ট") ||
+      errMsg.includes("সঠিক নয়") ||
+      errMsg.includes("পাওয়া যায়নি")
+    ) {
+      throw restErr;
+    }
+
+    console.error("[REST Fallback] REST action failed, switching to local DB fallback:", restErr);
+    
+    // Enable local storage mock fallback mode globally
+    useLocalStorageFallback = true;
+    
+    // Immediate retry inside mock storage mode (safe because apiFetch now intercepts and uses handleMockApi with payload)
+    try {
+      return await restAction();
+    } catch (retryErr: any) {
+      console.error("[REST Fallback] Retry with local database failed:", retryErr?.message || retryErr);
+      throw restErr;
+    }
   }
 };
 
