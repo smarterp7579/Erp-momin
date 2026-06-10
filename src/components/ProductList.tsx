@@ -64,6 +64,8 @@ export function ProductList({ user }: ProductListProps) {
   const [barcodeLayout, setBarcodeLayout] = useState<"a4_3col" | "a4_4col" | "thermal">("a4_3col");
   const [includePrice, setIncludePrice] = useState(true);
   const [includeName, setIncludeName] = useState(true);
+  const [useUniqueRandomBarcodes, setUseUniqueRandomBarcodes] = useState(true);
+  const [uniqueBarcodesForSession, setUniqueBarcodesForSession] = useState<string[]>([]);
 
   const isAdmin = user?.role === 'admin' || user?.id === "1";
   const canAdd = isAdmin || user?.permissions?.includes('add_product');
@@ -77,6 +79,28 @@ export function ProductList({ user }: ProductListProps) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (showBarcodePrintModal && barcodeProduct && useUniqueRandomBarcodes) {
+      const generated: string[] = [];
+      const existing = new Set([
+        barcodeProduct.sku,
+        barcodeProduct.barcode || "",
+        ...(barcodeProduct.barcodes || []),
+      ]);
+
+      while (generated.length < printQuantity) {
+        // Generate high performance 12 digit random code
+        const num = String(Math.floor(100000000000 + Math.random() * 900000000000));
+        if (!existing.has(num) && !generated.includes(num)) {
+          generated.push(num);
+        }
+      }
+      setUniqueBarcodesForSession(generated);
+    } else {
+      setUniqueBarcodesForSession([]);
+    }
+  }, [showBarcodePrintModal, useUniqueRandomBarcodes, printQuantity, barcodeProduct?.id]);
 
   const loadData = async () => {
     try {
@@ -213,9 +237,30 @@ export function ProductList({ user }: ProductListProps) {
     }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     const sheetElement = document.getElementById("print-barcode-sheet");
     if (!sheetElement) return;
+
+    if (useUniqueRandomBarcodes && uniqueBarcodesForSession.length > 0 && barcodeProduct) {
+      try {
+        const currentBarcodes = barcodeProduct.barcodes || [];
+        const finalBarcodes = [...currentBarcodes];
+        uniqueBarcodesForSession.forEach(code => {
+          if (!finalBarcodes.includes(code)) {
+            finalBarcodes.push(code);
+          }
+        });
+        
+        await api.updateProduct(barcodeProduct.id, { barcodes: finalBarcodes });
+        const updatedProduct = { ...barcodeProduct, barcodes: finalBarcodes };
+        setBarcodeProduct(updatedProduct);
+        setProducts(prev => prev.map(p => p.id === barcodeProduct.id ? updatedProduct : p));
+        showNotify("আলাদা র্যান্ডম বারকোডগুলো পণ্যের সাথে সেভ করা হয়েছে!", "success");
+      } catch (err) {
+        console.error("Failed to auto-save session unique barcodes:", err);
+        showNotify("আলাদা র্যান্ডম বারকোড সেভ করা যায়নি", "error");
+      }
+    }
 
     // Pack the styles we need for the barcode stickers so they render beautifully
     const styles = `
@@ -244,7 +289,7 @@ export function ProductList({ user }: ProductListProps) {
         .print-card {
           border: 1px solid #e2e8f0 !important;
           border-radius: 8px !important;
-          padding: 12px !important;
+          padding: 8px 12px !important;
           text-align: center !important;
           background: white !important;
           color: black !important;
@@ -253,13 +298,15 @@ export function ProductList({ user }: ProductListProps) {
           flex-direction: column !important;
           align-items: center !important;
           justify-content: space-between !important;
-          min-height: ${barcodeLayout === "a4_4col" ? "90px" : "110px"} !important;
+          min-height: ${barcodeLayout === "thermal" ? "140px" : barcodeLayout === "a4_4col" ? "110px" : "130px"} !important;
           box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
         }
         @media print {
           .print-card {
             border: 1px solid #000000 !important;
             box-shadow: none !important;
+            min-height: ${barcodeLayout === "thermal" ? "140px" : barcodeLayout === "a4_4col" ? "110px" : "130px"} !important;
+            height: auto !important;
           }
         }
         .barcode-container {
@@ -1126,7 +1173,8 @@ export function ProductList({ user }: ProductListProps) {
                   flex-direction: column !important;
                   align-items: center !important;
                   justify-content: space-between !important;
-                  height: ${barcodeLayout === "a4_4col" ? "90px" : "110px"} !important;
+                  min-height: ${barcodeLayout === "thermal" ? "140px" : barcodeLayout === "a4_4col" ? "110px" : "130px"} !important;
+                  height: auto !important;
                 }
                 .barcode-container {
                   display: flex !important;
@@ -1256,27 +1304,44 @@ export function ProductList({ user }: ProductListProps) {
                   </div>
 
                   {/* Toggle Fields on Labels */}
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-100 dark:border-slate-800/50 space-y-3">
-                    <p className="text-xs font-bold text-slate-400/80 font-bengali">স্টিকারে যা যা দেখাবে</p>
-                    <div className="flex items-center gap-6">
-                      <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-bengali cursor-pointer">
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-100 dark:border-slate-800/50 space-y-4">
+                    <div>
+                      <p className="text-xs font-bold text-slate-400/80 font-bengali mb-2">স্টিকারে যা যা দেখাবে</p>
+                      <div className="flex items-center gap-6">
+                        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-bengali cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={includeName}
+                            onChange={e => setIncludeName(e.target.checked)}
+                            className="rounded text-primary focus:ring-primary/20 w-4 h-4 bg-white dark:bg-slate-800"
+                          />
+                          <span>পণ্যের নাম</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-bengali cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={includePrice}
+                            onChange={e => setIncludePrice(e.target.checked)}
+                            className="rounded text-primary focus:ring-primary/20 w-4 h-4 bg-white dark:bg-slate-800"
+                          />
+                          <span>পণ্যের মূল্য</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-100 dark:border-slate-800/50 pt-3">
+                      <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300 font-bengali cursor-pointer font-bold">
                         <input 
                           type="checkbox" 
-                          checked={includeName}
-                          onChange={e => setIncludeName(e.target.checked)}
-                          className="rounded text-primary focus:ring-primary/20 w-4 h-4 bg-white dark:bg-slate-800"
+                          checked={useUniqueRandomBarcodes}
+                          onChange={e => setUseUniqueRandomBarcodes(e.target.checked)}
+                          className="rounded text-indigo-600 focus:ring-indigo-500/20 w-4 h-4 mt-0.5 bg-white dark:bg-slate-800"
                         />
-                        <span>পণ্যের নাম</span>
+                        <span>প্রতিটি লেবেলে ভিন্ন ভিন্ন র্যান্ডম বারকোড প্রিন্ট করুন</span>
                       </label>
-                      <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 font-bengali cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={includePrice}
-                          onChange={e => setIncludePrice(e.target.checked)}
-                          className="rounded text-primary focus:ring-primary/20 w-4 h-4 bg-white dark:bg-slate-800"
-                        />
-                        <span>পণ্যের মূল্য</span>
-                      </label>
+                      <p className="text-[11px] text-slate-400 font-bengali ml-6 mt-0.5 leading-snug">
+                        এটি সক্রিয় থাকলে প্রতিটি প্রিন্টকৃত স্টিকারে একটি আলাদা ইউনিক বারকোড জেনারেট হয়ে প্রিন্ট হবে এবং পণ্যের সাথে স্বয়ংক্রিয়ভাবে সেভ হবে।
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1315,46 +1380,51 @@ export function ProductList({ user }: ProductListProps) {
                     "grid gap-4 print-grid",
                     barcodeLayout === "a4_3col" ? "grid-cols-3" : barcodeLayout === "a4_4col" ? "grid-cols-4" : "grid-cols-1 max-w-[220px] mx-auto"
                   )}>
-                    {Array.from({ length: printQuantity }).map((_, index) => (
-                      <div 
-                        key={index} 
-                        className={cn(
-                          "border border-slate-200 p-2.5 rounded-lg text-center bg-white text-black flex flex-col justify-between items-center shadow-sm print-card",
-                          barcodeLayout === "a4_3col" ? "h-[110px]" : barcodeLayout === "a4_4col" ? "h-[90px] text-[10px]" : "h-[110px]"
-                        )}
-                      >
-                        {/* Custom shop header label */}
-                        {storeHeader && (
-                          <p className="font-extrabold text-[9px] uppercase border-b border-dashed border-slate-300 w-full pb-0.5 mb-1 text-slate-800 tracking-wider font-bengali print-card-header leading-tight">
-                            {storeHeader}
-                          </p>
-                        )}
-                        
-                        {/* Product Title */}
-                        {includeName && (
-                          <p className="font-bold text-slate-900 line-clamp-1 text-[10px] px-1 font-bengali leading-none print-card-name">
-                            {barcodeProduct.bnName || barcodeProduct.name}
-                          </p>
-                        )}
-                        
-                        {/* Barcode vector generator */}
-                        <div className="barcode-container my-1 w-full flex items-center justify-center overflow-hidden">
-                          <BarcodeGenerator 
-                            value={selectedBarcodeForPrint} 
-                            width={barcodeLayout === "a4_4col" ? 1.25 : 1.5} 
-                            height={barcodeLayout === "a4_4col" ? 28 : 34} 
-                            fontSize={9} 
-                          />
-                        </div>
+                    {Array.from({ length: printQuantity }).map((_, index) => {
+                      const barcodeVal = (useUniqueRandomBarcodes && uniqueBarcodesForSession[index]) 
+                        ? uniqueBarcodesForSession[index] 
+                        : selectedBarcodeForPrint;
+                      return (
+                        <div 
+                          key={index} 
+                          className={cn(
+                            "border border-slate-200 p-2.5 rounded-lg text-center bg-white text-black flex flex-col justify-between items-center shadow-sm print-card",
+                            barcodeLayout === "thermal" ? "min-h-[140px] w-full" : barcodeLayout === "a4_3col" ? "min-h-[130px]" : "min-h-[110px] text-[10px]"
+                          )}
+                        >
+                          {/* Custom shop header label */}
+                          {storeHeader && (
+                            <p className="font-extrabold text-[9px] uppercase border-b border-dashed border-slate-300 w-full pb-0.5 mb-1 text-slate-800 tracking-wider font-bengali print-card-header leading-tight">
+                              {storeHeader}
+                            </p>
+                          )}
+                          
+                          {/* Product Title */}
+                          {includeName && (
+                            <p className="font-bold text-slate-900 line-clamp-1 text-[10px] px-1 font-bengali leading-none print-card-name">
+                              {barcodeProduct.bnName || barcodeProduct.name}
+                            </p>
+                          )}
+                          
+                          {/* Barcode vector generator */}
+                          <div className="barcode-container my-1 w-full flex items-center justify-center overflow-hidden">
+                            <BarcodeGenerator 
+                              value={barcodeVal} 
+                              width={barcodeLayout === "a4_4col" ? 1.1 : 1.3} 
+                              height={barcodeLayout === "a4_4col" ? 24 : 30} 
+                              fontSize={9} 
+                            />
+                          </div>
 
-                        {/* Customer Sale Price marker */}
-                        {includePrice && (
-                          <p className="font-bold text-slate-950 border-t border-dashed border-slate-200 text-xs w-full pt-1.5 font-bengali leading-none print-card-price">
-                            ৳ {barcodeProduct.salePrice}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                          {/* Customer Sale Price marker */}
+                          {includePrice && (
+                            <p className="font-bold text-slate-950 border-t border-dashed border-slate-200 text-xs w-full pt-1.5 font-bengali leading-none print-card-price">
+                              ৳ {barcodeProduct.salePrice}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
