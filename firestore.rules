@@ -11,6 +11,14 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
     function hasValidSession() {
       return isSignedIn() && exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
     }

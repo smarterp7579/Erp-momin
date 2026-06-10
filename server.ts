@@ -82,20 +82,8 @@ const BACKUP_SECRET = "smart-erp-secure-backup-key-@2024";
 // Use /tmp for writable state in production (Cloud Run friendly)
 // Note: OS/Tmp is always writable, whereas app root might be read-only after deploy
 const IS_PROD = process.env.NODE_ENV === "production";
-const LAST_BACKUP_PATH = IS_PROD ? path.join(os.tmpdir(), "last_backup.txt") : path.join(process.cwd(), "last_backup.txt");
-const DB_PATH = IS_PROD ? path.join(os.tmpdir(), "db.json") : path.join(process.cwd(), "db.json");
-
-// Ensure db.json exists in /tmp for production if not there
-if (IS_PROD && !fs.existsSync(DB_PATH)) {
-  const repoDbPath = path.join(process.cwd(), "db.json");
-  if (fs.existsSync(repoDbPath)) {
-    try {
-      fs.copyFileSync(repoDbPath, DB_PATH);
-    } catch (e) {
-      console.warn("Failed to copy db.json to /tmp", e);
-    }
-  }
-}
+const LAST_BACKUP_PATH = path.join(process.cwd(), "last_backup.txt");
+const DB_PATH = path.join(process.cwd(), "db.json");
 
 async function fetchFirestoreBackupData(businessId: string = "main-business"): Promise<any> {
   const firestore = getFirestoreInstance();
