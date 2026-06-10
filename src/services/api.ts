@@ -571,74 +571,16 @@ const handleMockApi = async (url: string, options?: RequestInit): Promise<Respon
 };
 
 const apiFetch = async (url: string, options?: RequestInit): Promise<Response> => {
-  const isVercelHost = !window.location.host.includes("run.app") && !window.location.host.includes("localhost");
-  // Unconditionally use mock local API on static hosts like Vercel/Netlify for any /api/ requests,
-  // since these hosts do not have the custom Node.js Express server running.
-  if (useLocalStorageFallback || isVercelHost) {
-    const mockRes = await handleMockApi(url, options);
-    if (mockRes) return mockRes;
-  }
-
-  try {
-    const res = await window.fetch(url, options);
-    if (url.startsWith("/api/")) {
-      const contentType = res.headers.get("content-type") || "";
-      if (!res.ok || contentType.includes("text/html")) {
-        console.warn("[MOCK API Trigger] Error or HTML response returned for API request under /api/. Enabling local storage fallback.", url, "Status:", res.status);
-        useLocalStorageFallback = true;
-        const mockRes = await handleMockApi(url, options);
-        if (mockRes) return mockRes;
-      }
-    }
-    return res;
-  } catch (err: any) {
-    if (url.startsWith("/api/")) {
-      console.warn("[MOCK API Trigger] API Fetch failed. Enabling local storage fallback.", url, err?.message);
-      useLocalStorageFallback = true;
-      const mockRes = await handleMockApi(url, options);
-      if (mockRes) return mockRes;
-    }
-    throw err;
-  }
+  // Directly fetch resource cleanly without fallbacks to keep database actions perfectly consistent and online
+  return await window.fetch(url, options);
 };
 
 const fetch = apiFetch;
 
 // Helper to handle offline/connection/permission fallback
-const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction: () => Promise<T>): Promise<T> => {
-  // If Firestore is fully configured (not placeholder), ALWAYS attempt Firestore as the absolute primary database.
-  if (!isPlaceholderConfig) {
-    try {
-      return await promiseWithTimeout(firestoreAction(), 4000, "firestore_timeout: Firestore connection timed out after 4s");
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      console.warn("[Firestore Bypass] Temporary Firestore bypass for this operation item. Error:", errMsg);
-      
-      // Attempt the REST backend/service operations as a single-call graceful fallback, but do NOT lock the app permanently.
-      try {
-        return await restAction();
-      } catch (restErr: any) {
-        const restErrMsg = restErr?.message || String(restErr);
-        
-        // Propagate validation and credentials matching messages cleanly to the client
-        if (
-          restErrMsg.includes("পাসওয়ার্ড") || 
-          restErrMsg.includes("ইমেইল") || 
-          restErrMsg.includes("অ্যাকাউন্ট") ||
-          restErrMsg.includes("সঠিক নয়") ||
-          restErrMsg.includes("পাওয়া যায়নি")
-        ) {
-          throw restErr;
-        }
-        
-        console.error("[Fallback Endpoint] Fallback REST action failed too:", restErrMsg);
-        throw err; // Propagate the original Firestore error
-      }
-    }
-  }
-
-  // If there is indeed no active Firebase configuration, run through the REST mock and local mock directly
-  return await restAction();
+const runWithFallback = async <T>(firestoreAction: () => Promise<T>, _restAction: () => Promise<T>): Promise<T> => {
+  // Query Cloud Firestore directly as requested, preventing any silent fallback or local database overrides
+  return await firestoreAction();
 };
 
 export const api = {
