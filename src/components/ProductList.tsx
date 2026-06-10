@@ -6,7 +6,7 @@
 import { useState, useEffect, FormEvent, useRef, ChangeEvent } from "react";
 import { api } from "../services/api";
 import { Product, Category, User } from "../types";
-import { Package, Plus, Search, Filter, MoreVertical, Edit, Trash2, FileSpreadsheet, Download, Scan, X, Barcode, Printer } from "lucide-react";
+import { Package, Plus, Search, Filter, MoreVertical, Edit, Trash2, FileSpreadsheet, Download, Scan, X, Barcode, Printer, RefreshCw } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { cn } from "../lib/utils";
 import { BarcodeScanner } from "./BarcodeScanner";
@@ -690,7 +690,20 @@ export function ProductList({ user }: ProductListProps) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700 dark:text-slate-300 font-bengali">SKU / কোড</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-bold text-slate-700 dark:text-slate-300 font-bengali">SKU / কোড</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const randomSku = String(Math.floor(10000000 + Math.random() * 90000000));
+                        setFormData({ ...formData, sku: randomSku });
+                        showNotify("র্যান্ডম SKU জেনারেট করা হয়েছে!", "success");
+                      }}
+                      className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:opacity-80 font-bengali flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/45 px-2 py-0.5 rounded-md"
+                    >
+                      <RefreshCw size={11} /> র্যান্ডম জেনারেট
+                    </button>
+                  </div>
                   <input 
                     required 
                     type="text" 
@@ -760,13 +773,28 @@ export function ProductList({ user }: ProductListProps) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-bold text-slate-700 dark:text-slate-300 font-bengali">বারকোড সমূহ (Barcodes)</label>
-                    <button 
-                      type="button" 
-                      onClick={() => setScannerTarget('add')}
-                      className="text-primary dark:text-blue-400 hover:bg-primary/10 dark:hover:bg-blue-400/10 p-1.5 rounded-lg flex items-center gap-1 text-xs"
-                    >
-                      <Scan size={14} /> স্ক্যান
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          const randomBc = String(Math.floor(1000000000000 + Math.random() * 9000000000000));
+                          if (!formData.barcodes?.includes(randomBc)) {
+                            setFormData({ ...formData, barcodes: [...(formData.barcodes || []), randomBc] });
+                            showNotify("র্যান্ডম বারকোড যোগ করা হয়েছে!", "success");
+                          }
+                        }}
+                        className="text-indigo-600 dark:text-indigo-400 hover:opacity-80 font-bengali flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/45 px-2 py-1 rounded-md text-xs font-bold"
+                      >
+                        <RefreshCw size={11} /> র্যান্ডম বারকোড
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setScannerTarget('add')}
+                        className="text-primary dark:text-blue-400 hover:bg-primary/10 dark:hover:bg-blue-400/10 p-1.5 rounded-lg flex items-center gap-1 text-xs"
+                      >
+                        <Scan size={14} /> স্ক্যান
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <div className="flex gap-2">
