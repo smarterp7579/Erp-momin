@@ -193,6 +193,26 @@ export function ProductList({ user }: ProductListProps) {
     setShowDeleteModal(true);
   };
 
+  const generateRandomBarcodeForProduct = async () => {
+    if (!barcodeProduct) return;
+    const newCode = String(Math.floor(10000000000 + Math.random() * 90000000000));
+    const currentBarcodes = barcodeProduct.barcodes || [];
+    if (currentBarcodes.includes(newCode)) return; // prevent collision
+    
+    const updatedBarcodes = [...currentBarcodes, newCode];
+    try {
+      const updatedProduct = { ...barcodeProduct, barcodes: updatedBarcodes };
+      await api.updateProduct(barcodeProduct.id, { barcodes: updatedBarcodes });
+      setBarcodeProduct(updatedProduct);
+      setSelectedBarcodeForPrint(newCode);
+      setProducts(prev => prev.map(p => p.id === barcodeProduct.id ? updatedProduct : p));
+      showNotify("নতুন র্যান্ডম বারকোড তৈরি ও সেভ করা হয়েছে!", "success");
+    } catch (err) {
+      console.error(err);
+      showNotify("র্যান্ডম বারকোড সেভ করা যায়নি", "error");
+    }
+  };
+
   const handlePrint = () => {
     const sheetElement = document.getElementById("print-barcode-sheet");
     if (!sheetElement) return;
@@ -313,10 +333,11 @@ export function ProductList({ user }: ProductListProps) {
   const resetForm = () => {
     setIsAddingCategory(false);
     setNewCategoryName("");
+    const randomSku = String(Math.floor(10000000 + Math.random() * 90000000));
     setFormData({
       name: "",
       bnName: "",
-      sku: "",
+      sku: randomSku,
       categoryId: categories[0]?.id || "",
       unit: "pcs",
       purchasePrice: 0,
@@ -1182,7 +1203,16 @@ export function ProductList({ user }: ProductListProps) {
 
                   {/* Choose which code to serialize */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400 font-bengali">প্রিন্টযোগ্য বারকোড নির্বাচন</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 font-bengali">প্রিন্টযোগ্য বারকোড নির্বাচন</label>
+                      <button
+                        type="button"
+                        onClick={generateRandomBarcodeForProduct}
+                        className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:opacity-80 font-bengali flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/45 px-2 py-0.5 rounded"
+                      >
+                        <RefreshCw size={10} /> নতুন র্যান্ডম কোড
+                      </button>
+                    </div>
                     <select 
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg py-2 px-3 text-sm text-slate-900 dark:text-slate-100"
                       value={selectedBarcodeForPrint}
