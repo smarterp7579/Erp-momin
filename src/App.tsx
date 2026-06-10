@@ -136,6 +136,18 @@ export default function App() {
                 updatedAt: new Date().toISOString()
               });
               console.log("[Firebase Auth] Active session synchronized successfully.");
+
+              // Silently migrate / synchronize any legacy local storage database to Cloud Firestore structure
+              try {
+                const { syncLocalStorageToFirestore } = await import("./services/api");
+                syncLocalStorageToFirestore().then((synced) => {
+                  if (synced) {
+                    console.log("[Sync] Automatic database synchronization completed.");
+                  }
+                }).catch(err => console.error("[Sync] Background sync error:", err));
+              } catch (syncErr) {
+                console.warn("[Sync] Import sync helper failed:", syncErr);
+              }
             }
           } catch (e) {
             console.warn("Session sync failed:", e);
@@ -329,6 +341,12 @@ export default function App() {
           updatedAt: new Date().toISOString()
         });
         console.log("[Firebase Auth] Session synced on login:", auth.currentUser.uid);
+
+        // Background sync client database to Cloud Firestore upon manual login
+        try {
+          const { syncLocalStorageToFirestore } = await import("./services/api");
+          syncLocalStorageToFirestore().catch(e => console.error("[Sync] Login sync error:", e));
+        } catch (err) {}
       } catch (err) {
         console.error("[Firebase Auth] Failed to sync session on login:", err);
       }

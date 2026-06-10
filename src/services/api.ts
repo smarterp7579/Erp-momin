@@ -79,8 +79,11 @@ import firebaseConfig from "../../firebase-applet-config.json";
 const isPlaceholderConfig = 
   !firebaseConfig || 
   !firebaseConfig.projectId || 
-  firebaseConfig.projectId.includes("remixed-project-id") || 
-  firebaseConfig.apiKey.includes("remixed-api-key");
+  firebaseConfig.projectId === "" ||
+  firebaseConfig.projectId.includes("your-project-id") ||
+  firebaseConfig.projectId.includes("YOUR-PROJECT-ID") ||
+  !firebaseConfig.apiKey ||
+  firebaseConfig.apiKey === "";
 
 let useRestFallback = isPlaceholderConfig;
 let useLocalStorageFallback = false;
@@ -1955,4 +1958,106 @@ export const api = {
       throw new Error(err.message || "Failed to restore database");
     }
   },
+};
+
+export const syncLocalStorageToFirestore = async (): Promise<boolean> => {
+  // If we shouldn't or can't use Firestore, skip
+  if (useRestFallback || useLocalStorageFallback) {
+    console.log("[Sync] Skipping sync: offline/fallback mode is active");
+    return false;
+  }
+
+  try {
+    const rawLocal = localStorage.getItem("smart_business_db_v2");
+    if (!rawLocal) return false;
+
+    const localDb = JSON.parse(rawLocal);
+    
+    // Check if the user has any local sales, products, expenses, suppliers, customers, categories
+    const localProducts = localDb.products || [];
+    const localSales = localDb.sales || [];
+    const localCustomers = localDb.customers || [];
+    const localSuppliers = localDb.suppliers || [];
+    const localExpenses = localDb.expenses || [];
+    const localCategories = localDb.categories || [];
+    const localBusiness = localDb.business || {};
+
+    // If local DB is virtually empty or has no custom settings, skip sync
+    if (localProducts.length === 0 && localSales.length === 0 && localCustomers.length === 0) {
+      console.log("[Sync] Local database is empty, no sync required.");
+      return false;
+    }
+
+    console.log("[Sync] Checking Firestore status for sync...");
+
+    // 1. Verify if Firestore is already populated
+    const productsSnap = await getDocs(getScopedCollection("products"));
+    if (!productsSnap.empty) {
+      console.log("[Sync] Firestore already has products. Skipping automatic sync to prevent overriding cloud data.");
+      return false;
+    }
+
+    console.log("[Sync] Firestore is empty. Commencing background migration of local storage data to Cloud Firestore...");
+
+    // Sync Business Details
+    if (localBusiness && Object.keys(localBusiness).length > 0) {
+      const docRef = doc(db, "businesses", currentBusinessId);
+      const cleaned = cleanData(localBusiness);
+      await setDoc(docRef, { ...cleaned, id: currentBusinessId }, { merge: true });
+    }
+
+    // Sync Categories
+    for (const cat of localCategories) {
+      if (cat.id) {
+        const cleaned = cleanData(cat);
+        await setDoc(doc(getScopedCollection("categories"), cat.id), cleaned);
+      }
+    }
+
+    // Sync Products
+    for (const prod of localProducts) {
+      if (prod.id) {
+        const cleaned = cleanData(prod);
+        await setDoc(doc(getScopedCollection("products"), prod.id), cleaned);
+      }
+    }
+
+    // Sync Customers
+    for (const cust of localCustomers) {
+      if (cust.id) {
+        const cleaned = cleanData(cust);
+        await setDoc(doc(getScopedCollection("customers"), cust.id), cleaned);
+      }
+    }
+
+    // Sync Suppliers
+    for (const sup of localSuppliers) {
+      if (sup.id) {
+        const cleaned = cleanData(sup);
+        await setDoc(doc(getScopedCollection("suppliers"), sup.id), cleaned);
+      }
+    }
+
+    // Sync Sales
+    for (const sale of localSales) {
+      if (sale.id) {
+        const cleaned = cleanData(sale);
+        await setDoc(doc(getScopedCollection("sales"), sale.id), cleaned);
+      }
+    }
+
+    // Sync Expenses
+    for (const exp of localExpenses) {
+      if (exp.id) {
+        const cleaned = cleanData(exp);
+        await setDoc(doc(getScopedCollection("expenses"), exp.id), cleaned);
+      }
+    }
+
+    console.log("[Sync] Succeeded in migrating local storage to Cloud Firestore!");
+    return true;
+  } catch (err) {
+    console.error("[Sync] Error during database synchronization:", err);
+    return false;
+  }
 };
