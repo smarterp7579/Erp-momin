@@ -1272,7 +1272,72 @@ async function startServer() {
       }
     };
 
+    // Migration function to move any local server data (db.json) directly into Cloud Firestore
+    const migrateLocalToFirestore = async () => {
+      if (!isFirestoreAccessible) return;
+      try {
+        const firestore = getFirestoreInstance();
+        if (!firestore) return;
+
+        console.log("[Migration Engine] Checking if local db.json needs migration to Firestore...");
+        const dbData = getDB();
+        const businessId = "main-business"; // default business scope
+
+        // 1. Sync Business settings if available
+        if (dbData.business && dbData.business.name) {
+          console.log("[Migration Engine] Migrating business settings...");
+          await firestore.collection("businesses").doc(businessId).set({
+            ...dbData.business,
+            id: businessId
+          }, { merge: true });
+        }
+
+        // 2. Sync Users table
+        if (Array.isArray(dbData.users) && dbData.users.length > 0) {
+          console.log("[Migration Engine] Migrating users...");
+          for (const u of dbData.users) {
+            if (u.id) {
+              await firestore.collection("users").doc(u.id).set(u, { merge: true });
+            }
+          }
+        }
+
+        // Subcollection Sync Helper
+        const syncSubcollection = async (colName: string, items: any[]) => {
+          if (!Array.isArray(items) || items.length === 0) return;
+          console.log(`[Migration Engine] Migrating ${items.length} items to subcollection: ${colName}...`);
+          
+          const parentDoc = firestore.collection("businesses").doc(businessId);
+          // Make sure parent document exists in the schema
+          await parentDoc.set({ id: businessId }, { merge: true });
+
+          for (const item of items) {
+            if (item.id) {
+              const cleaned = { ...item };
+              delete cleaned.id; // Firestore ID is document path ID
+              const docRef = parentDoc.collection(colName).doc(item.id);
+              await docRef.set(cleaned, { merge: true });
+            }
+          }
+        };
+
+        // Sync each primary collection
+        if (dbData.categories) await syncSubcollection("categories", dbData.categories);
+        if (dbData.products) await syncSubcollection("products", dbData.products);
+        if (dbData.customers) await syncSubcollection("customers", dbData.customers);
+        if (dbData.suppliers) await syncSubcollection("suppliers", dbData.suppliers);
+        if (dbData.sales) await syncSubcollection("sales", dbData.sales);
+        if (dbData.expenses) await syncSubcollection("expenses", dbData.expenses);
+        if (dbData.smsLogs) await syncSubcollection("sms_logs", dbData.smsLogs);
+
+        console.log("[Migration Engine] Local db.json content successfully migrated/merged to Cloud Firestore.");
+      } catch (err: any) {
+        console.error("[Migration Engine] Background migration to Firestore failed:", err.message);
+      }
+    };
+
     runMissedBackupCheck();
+    migrateLocalToFirestore();
   });
 }
 

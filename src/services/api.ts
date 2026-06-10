@@ -572,10 +572,9 @@ const handleMockApi = async (url: string, options?: RequestInit): Promise<Respon
 
 const apiFetch = async (url: string, options?: RequestInit): Promise<Response> => {
   const isVercelHost = !window.location.host.includes("run.app") && !window.location.host.includes("localhost");
-  const hasUserSession = auth.currentUser !== null;
   // Unconditionally use mock local API on static hosts like Vercel/Netlify for any /api/ requests,
   // since these hosts do not have the custom Node.js Express server running.
-  if ((useLocalStorageFallback && !hasUserSession) || isVercelHost) {
+  if (useLocalStorageFallback || isVercelHost) {
     const mockRes = await handleMockApi(url, options);
     if (mockRes) return mockRes;
   }
@@ -586,9 +585,7 @@ const apiFetch = async (url: string, options?: RequestInit): Promise<Response> =
       const contentType = res.headers.get("content-type") || "";
       if (!res.ok || contentType.includes("text/html")) {
         console.warn("[MOCK API Trigger] Error or HTML response returned for API request under /api/. Enabling local storage fallback.", url, "Status:", res.status);
-        if (!hasUserSession) {
-          useLocalStorageFallback = true;
-        }
+        useLocalStorageFallback = true;
         const mockRes = await handleMockApi(url, options);
         if (mockRes) return mockRes;
       }
@@ -597,9 +594,7 @@ const apiFetch = async (url: string, options?: RequestInit): Promise<Response> =
   } catch (err: any) {
     if (url.startsWith("/api/")) {
       console.warn("[MOCK API Trigger] API Fetch failed. Enabling local storage fallback.", url, err?.message);
-      if (!hasUserSession) {
-        useLocalStorageFallback = true;
-      }
+      useLocalStorageFallback = true;
       const mockRes = await handleMockApi(url, options);
       if (mockRes) return mockRes;
     }
@@ -611,70 +606,39 @@ const fetch = apiFetch;
 
 // Helper to handle offline/connection/permission fallback
 const runWithFallback = async <T>(firestoreAction: () => Promise<T>, restAction: () => Promise<T>): Promise<T> => {
-  const hasUserSession = auth.currentUser !== null;
-
-  if (hasUserSession) {
-    // Force reset fallback flags if user is authenticated to ensure we always use Cloud Firestore
-    useLocalStorageFallback = false;
-    useRestFallback = false;
-  }
-
-  // If we already know we are running in local/fallback database mode, run restAction immediately
-  if (useLocalStorageFallback && !hasUserSession) {
+  // If Firestore is fully configured (not placeholder), ALWAYS attempt Firestore as the absolute primary database.
+  if (!isPlaceholderConfig) {
     try {
-      return await restAction();
-    } catch (restErr: any) {
-      console.warn("[Fallback] Direct local database fallback action failed:", restErr?.message || restErr);
-    }
-  }
-
-  // 1. Try Firestore (if Firestore fallback is not yet active, OR if authenticated)
-  if (!useRestFallback || hasUserSession) {
-    try {
-      return await promiseWithTimeout(firestoreAction(), 5000, "firestore_timeout: Firestore connection timed out after 5s");
+      return await promiseWithTimeout(firestoreAction(), 4000, "firestore_timeout: Firestore connection timed out after 4s");
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      console.warn("[Firestore Bypass] Firestore error/timeout encountered:", errMsg);
-      // Only set permanent fallback if the user is NOT authenticated.
-      // If we are logged in, we want to retry Firestore on their next action!
-      if (!hasUserSession) {
-        useRestFallback = true;
+      console.warn("[Firestore Bypass] Temporary Firestore bypass for this operation item. Error:", errMsg);
+      
+      // Attempt the REST backend/service operations as a single-call graceful fallback, but do NOT lock the app permanently.
+      try {
+        return await restAction();
+      } catch (restErr: any) {
+        const restErrMsg = restErr?.message || String(restErr);
+        
+        // Propagate validation and credentials matching messages cleanly to the client
+        if (
+          restErrMsg.includes("পাসওয়ার্ড") || 
+          restErrMsg.includes("ইমেইল") || 
+          restErrMsg.includes("অ্যাকাউন্ট") ||
+          restErrMsg.includes("সঠিক নয়") ||
+          restErrMsg.includes("পাওয়া যায়নি")
+        ) {
+          throw restErr;
+        }
+        
+        console.error("[Fallback Endpoint] Fallback REST action failed too:", restErrMsg);
+        throw err; // Propagate the original Firestore error
       }
     }
   }
 
-  // 2. Try REST API
-  try {
-    return await restAction();
-  } catch (restErr: any) {
-    const errMsg = restErr?.message || String(restErr);
-    
-    // CRITICAL: Propagate validation and user credentials check errors directly so the front-end login screens can display precise instructions.
-    if (
-      errMsg.includes("পাসওয়ার্ড") || 
-      errMsg.includes("ইমেইল") || 
-      errMsg.includes("অ্যাকাউন্ট") ||
-      errMsg.includes("সঠিক নয়") ||
-      errMsg.includes("পাওয়া যায়নি")
-    ) {
-      throw restErr;
-    }
-
-    console.error("[REST Fallback] REST action failed, switching to local DB fallback:", restErr);
-    
-    // Enable local storage mock fallback mode globally ONLY if not authenticated
-    if (!hasUserSession) {
-      useLocalStorageFallback = true;
-    }
-    
-    // Immediate retry inside mock storage mode (safe because apiFetch now intercepts and uses handleMockApi with payload)
-    try {
-      return await restAction();
-    } catch (retryErr: any) {
-      console.error("[REST Fallback] Retry with local database failed:", retryErr?.message || retryErr);
-      throw restErr;
-    }
-  }
+  // If there is indeed no active Firebase configuration, run through the REST mock and local mock directly
+  return await restAction();
 };
 
 export const api = {
@@ -1980,11 +1944,6 @@ export const api = {
 };
 
 export const syncLocalStorageToFirestore = async (): Promise<boolean> => {
-  if (auth.currentUser) {
-    useLocalStorageFallback = false;
-    useRestFallback = false;
-  }
-
   // If we shouldn't or can't use Firestore, skip
   if (useRestFallback || useLocalStorageFallback) {
     console.log("[Sync] Skipping sync: offline/fallback mode is active");
